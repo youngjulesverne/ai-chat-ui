@@ -1,65 +1,129 @@
+import { prisma } from "../../../../../lib/prisma";
 import { getAiReply } from "../../../../../lib/openrouter";
 
-type Message = {
-  role: "user" | "assistant";
-  content: string;
+type Context = {
+  params: Promise<{ id: string }>;
 };
 
-const globalForMessages = globalThis as typeof globalThis & {
-  messagesStore?: Record<string, Message[]>;
-};
+export async function GET(_request: Request, context: Context) {
+  const { id } = await context.params;
 
-const messagesDb =
-  globalForMessages.messagesStore ??
-  (globalForMessages.messagesStore = {
-    "1": [],
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: {
+      messages: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          createdAt: true,
+        },
+      },
+    },
   });
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { id } = await context.params;
-  return Response.json(messagesDb[id] || []);
-}
-
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { id } = await context.params;
-  const body = await request.json();
-
-  const userMessage: Message = {
-    role: "user",
-    content: body.content,
-  };
-
-  if (!messagesDb[id]) {
-    messagesDb[id] = [];
+  if (!conversation) {
+    return Response.json({ error: "Conversation not found" }, { status: 404 });
   }
 
-  messagesDb[id].push(userMessage);
+  return Response.json(conversation.messages);
+}
+
+export async function POST(request: Request, context: Context) {
+  const { id } = await context.params;
+  const body = await request.json();
+  const content = String(body.content ?? "").trim();
+
+  if (!content) {
+    return Response.json({ error: "Message content is required" }, { status: 400 });
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: {
+      messages: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          role: true,
+          content: true,
+        },
+      },
+    },
+  });
+
+  if (!conversation) {
+    return Response.json({ error: "Conversation not found" }, { status: 404 });
+  }
+
+  const userMessage = await prisma.message.create({
+    data: {
+      conversationId: id,
+      role: "user",
+      content,
+    },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      createdAt: true,
+    },
+  });
+
+  await prisma.conversation.update({
+    where: { id },
+    data: {
+      title:
+        conversation.title === "New Chat"
+          ? content.slice(0, 30)
+          : conversation.title,
+      subtitle: content.slice(0, 60),
+    },
+  });
 
   try {
-    const aiText = await getAiReply(messagesDb[id]);
+    const aiText = await getAiReply([
+      ...conversation.messages,
+      { role: "user", content },
+    ]);
 
-    const assistantMessage: Message = {
-      role: "assistant",
-      content: aiText,
-    };
+    const assistantMessage = await prisma.message.create({
+      data: {
+        conversationId: id,
+        role: "assistant",
+        content: aiText,
+      },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        createdAt: true,
+      },
+    });
 
-    messagesDb[id].push(assistantMessage);
+    await prisma.conversation.update({
+      where: { id },
+      data: {
+        subtitle: aiText.slice(0, 60),
+      },
+    });
 
-    return Response.json({ assistantMessage });
+    return Response.json({ userMessage, assistantMessage }, { status: 201 });
   } catch {
-    const assistantMessage: Message = {
-      role: "assistant",
-      content: "Sorry, something went wrong while fetching the AI response.",
-    };
+    const assistantMessage = await prisma.message.create({
+      data: {
+        conversationId: id,
+        role: "assistant",
+        content: "Sorry, something went wrong while fetching the AI response.",
+      },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        createdAt: true,
+      },
+    });
 
-    messagesDb[id].push(assistantMessage);
-
-    return Response.json({ assistantMessage }, { status: 500 });
+    return Response.json({ userMessage, assistantMessage }, { status: 500 });
   }
 }

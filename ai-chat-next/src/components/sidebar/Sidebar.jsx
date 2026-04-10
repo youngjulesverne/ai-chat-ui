@@ -5,38 +5,52 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onNewChat,
+  onDeleteConversation,
+  isCreating,
+  isDeleting,
 }) {
   return (
-    <aside className="w-72 border-r border-zinc-800 bg-zinc-950 p-4 text-zinc-100">
+    <aside className="flex w-80 flex-col border-r border-zinc-800 bg-zinc-950 p-4">
       <button
-        className="w-full rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white"
-        type="button"
         onClick={onNewChat}
+        disabled={isCreating}
+        className="mb-4 rounded-2xl bg-zinc-100 px-4 py-3 text-sm font-medium text-zinc-900 transition hover:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        + New Chat
+        {isCreating ? "Creating..." : "+ New Chat"}
       </button>
 
-      <div className="mt-6 space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-          Conversations
-        </p>
+      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Conversations
+      </div>
 
+      <div className="flex-1 space-y-2 overflow-y-auto">
         {conversations.map((conversation) => (
-          <button
+          <div
             key={conversation.id}
-            type="button"
-            onClick={() => onSelectConversation(conversation.id)}
-            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+            className={`rounded-xl border p-2 transition ${
               conversation.id === activeConversationId
                 ? "border-zinc-700 bg-zinc-900"
                 : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900"
             }`}
           >
-            <div className="text-sm font-semibold">{conversation.title}</div>
-            <div className="text-xs text-zinc-400">
-              {conversation.subtitle || "Open conversation"}
-            </div>
-          </button>
+            <button
+              onClick={() => onSelectConversation(conversation.id)}
+              className="block w-full text-left"
+            >
+              <div className="truncate text-sm font-medium">{conversation.title}</div>
+              <div className="truncate text-xs text-zinc-500">
+                {conversation.subtitle || "Open conversation"}
+              </div>
+            </button>
+
+            <button
+              onClick={() => onDeleteConversation(conversation.id)}
+              disabled={isDeleting}
+              className="mt-2 text-xs text-red-400 transition hover:text-red-300 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          </div>
         ))}
       </div>
     </aside>

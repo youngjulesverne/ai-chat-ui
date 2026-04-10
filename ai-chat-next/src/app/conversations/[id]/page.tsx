@@ -1,108 +1,108 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Sidebar from "../../../components/sidebar/Sidebar";
 import ChatPanel from "../../../components/chat/ChatPanel";
-
-type Conversation = {
-  id: string;
-  title: string;
-  subtitle: string;
-};
-
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-};
+import {
+  createConversation,
+  deleteConversation,
+  fetchConversations,
+  fetchMessages,
+  sendMessage,
+  type Message,
+} from "../../../lib/api";
 
 export default function ConversationPage() {
   const router = useRouter();
   const params = useParams();
+  const queryClient = useQueryClient();
   const conversationId = String(params.id ?? "");
 
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoadingReply, setIsLoadingReply] = useState(false);
+  const conversationsQuery = useQuery({
+    queryKey: ["conversations"],
+    queryFn: fetchConversations,
+  });
 
-  useEffect(() => {
-    async function loadConversations() {
-      const res = await fetch("/api/conversations");
-      if (!res.ok) return;
-      const data = await res.json();
-      setConversations(data);
+  const messagesQuery = useQuery({
+    queryKey: ["messages", conversationId],
+    queryFn: () => fetchMessages(conversationId),
+    enabled: Boolean(conversationId),
+  });
+
+  const createConversationMutation = useMutation({
+    mutationFn: createConversation,
+    onSuccess: async (newConversation) => {
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      router.push(`/conversations/${newConversation.id}`);
+    },
+  });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: (content: string) => sendMessage(conversationId, content),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["messages", conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
+    },
+  });
+
+  const deleteConversationMutation = useMutation({
+    mutationFn: (id: string) => deleteConversation(id),
+    onSuccess: async (_, deletedId) => {
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+
+      if (deletedId === conversationId) {
+        const updated = await queryClient.fetchQuery({
+          queryKey: ["conversations"],
+          queryFn: fetchConversations,
+        });
+
+        if (updated.length > 0) {
+          router.push(`/conversations/${updated[0].id}`);
+        } else {
+          const newConversation = await createConversationMutation.mutateAsync();
+          router.push(`/conversations/${newConversation.id}`);
+        }
+      }
+    },
+  });
+
+  const optimisticMessages = useMemo(() => {
+    const base = messagesQuery.data ?? [];
+    if (!sendMessageMutation.isPending || !sendMessageMutation.variables) {
+      return base;
     }
-    loadConversations();
-  }, []);
-
-  useEffect(() => {
-    async function loadMessages() {
-      if (!conversationId) return;
-      const res = await fetch(`/api/conversations/${conversationId}/messages`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setMessages(data);
-    }
-    loadMessages();
-  }, [conversationId]);
-
-  async function handleNewChat() {
-    const res = await fetch("/api/conversations", { method: "POST" });
-    if (!res.ok) return;
-    const newConversation = await res.json();
-    router.push(`/conversations/${newConversation.id}`);
-  }
-
-  async function handleSendMessage(text: string) {
-    if (!conversationId) return;
 
     const optimisticUserMessage: Message = {
+      id: "optimistic-user",
       role: "user",
-      content: text,
+      content: sendMessageMutation.variables,
     };
 
-    setMessages((prev) => [...prev, optimisticUserMessage]);
-    setIsLoadingReply(true);
-
-    try {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: text }),
-      });
-
-      const data = await res.json();
-
-      if (data.assistantMessage) {
-        setMessages((prev) => [...prev, data.assistantMessage]);
-      }
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry, something went wrong while fetching the AI response.",
-        },
-      ]);
-    } finally {
-      setIsLoadingReply(false);
-    }
-  }
+    return [...base, optimisticUserMessage];
+  }, [messagesQuery.data, sendMessageMutation.isPending, sendMessageMutation.variables]);
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-zinc-950 text-zinc-100">
       <Sidebar
-        conversations={conversations}
+        conversations={conversationsQuery.data ?? []}
         activeConversationId={conversationId}
-        onSelectConversation={(id) => router.push(`/conversations/${id}`)}
-        onNewChat={handleNewChat}
+        onSelectConversation={(id: string) => router.push(`/conversations/${id}`)}
+        onNewChat={() => createConversationMutation.mutate()}
+        onDeleteConversation={(id: string) => deleteConversationMutation.mutate(id)}
+        isCreating={createConversationMutation.isPending}
+        isDeleting={deleteConversationMutation.isPending}
       />
+
       <ChatPanel
-        messages={messages}
-        onSendMessage={handleSendMessage}
-        isLoadingReply={isLoadingReply}
+        messages={optimisticMessages}
+        onSendMessage={async (text: string) => {
+          await sendMessageMutation.mutateAsync(text);
+        }}
+        isLoadingReply={sendMessageMutation.isPending}
       />
     </div>
   );
