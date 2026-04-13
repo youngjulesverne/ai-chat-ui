@@ -27,11 +27,8 @@ export default function MessageList({ messages, isLoadingReply }) {
 
   return (
     <section className="flex-1 space-y-4 overflow-y-auto px-6 py-6" aria-label="Messages">
-      {messages.map((message, index) => (
-        <MessageBubble
-          key={`${message.role}-${index}-${message.content}`}
-          message={message}
-        />
+      {messages.map((message) => (
+        <MessageBubble key={message.id} message={message} />
       ))}
 
       {isLoadingReply ? (

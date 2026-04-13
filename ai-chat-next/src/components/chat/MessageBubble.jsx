@@ -1,7 +1,17 @@
 "use client";
 
+function getMessageText(message) {
+  if (!message?.parts) return "";
+
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
 export default function MessageBubble({ message }) {
   const isUser = message.role === "user";
+  const text = getMessageText(message);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -13,7 +23,7 @@ export default function MessageBubble({ message }) {
         <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide opacity-70">
           {isUser ? "You" : "Assistant"}
         </div>
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        <p className="whitespace-pre-wrap break-words">{text}</p>
       </div>
     </div>
   );

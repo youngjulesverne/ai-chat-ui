@@ -1,23 +1,13 @@
 import { redirect } from "next/navigation";
-import { prisma } from "../lib/prisma";
+import { createConversation, listConversations } from "../lib/data/chat";
 
 export default async function Home() {
-  const firstConversation = await prisma.conversation.findFirst({
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
+  const conversations = await listConversations();
 
-  if (firstConversation) {
-    redirect(`/conversations/${firstConversation.id}`);
+  if (conversations.length > 0) {
+    redirect(`/conversations/${conversations[0].id}`);
   }
 
-  const newConversation = await prisma.conversation.create({
-    data: {
-      title: "New Chat",
-      subtitle: "Open conversation",
-    },
-    select: { id: true },
-  });
-
+  const newConversation = await createConversation();
   redirect(`/conversations/${newConversation.id}`);
 }
