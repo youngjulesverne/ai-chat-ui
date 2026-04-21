@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { convertToModelMessages, type UIMessage, streamText } from "ai";
+import { type UIMessage, streamText } from "ai";
 import { addMessage } from "../../../../../lib/data/chat";
 
 const openrouter = createOpenAI({
@@ -26,19 +26,13 @@ export async function POST(
     const body = await request.json();
     const messages: UIMessage[] = body.messages ?? [];
 
-    console.log("STREAM HIT");
-    console.log("conversationId:", conversationId);
-    console.log("messages length:", messages.length);
-
     const lastUserMessage = [...messages]
       .reverse()
       .find((message) => message.role === "user");
 
     const userText = getTextFromMessage(lastUserMessage);
-    console.log("userText:", userText);
 
     if (!userText) {
-      console.log("No user text found");
       return new Response("User message is required.", { status: 400 });
     }
 
@@ -48,32 +42,25 @@ export async function POST(
       content: userText,
     });
 
-    console.log("Saved user message");
-
     const result = streamText({
-      model: openrouter("nvidia/nemotron-3-super-120b-a12b:free"),
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.parts
-          .filter((p) => p.type === "text")
-          .map((p) => p.text)
+      model: openrouter("openai/gpt-4.1-mini"),
+      messages: messages.map((message) => ({
+        role: message.role,
+        content: message.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
           .join(""),
       })),
     });
 
-    console.log("streamText started");
-
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
       onFinish: async ({ messages: finishedMessages }) => {
-        console.log("onFinish called");
-
         const lastAssistantMessage = [...finishedMessages]
           .reverse()
           .find((message) => message.role === "assistant");
 
         const assistantText = getTextFromMessage(lastAssistantMessage);
-        console.log("assistantText:", assistantText);
 
         if (assistantText) {
           await addMessage({
@@ -81,9 +68,6 @@ export async function POST(
             role: "assistant",
             content: assistantText,
           });
-          console.log("Saved assistant message");
-        } else {
-          console.log("No assistant text to save");
         }
       },
     });

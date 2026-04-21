@@ -40,9 +40,20 @@ export async function createConversation() {
 }
 
 export async function deleteConversation(id: string) {
+  const existing = await prisma.conversation.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    return null;
+  }
+
   await prisma.conversation.delete({
     where: { id },
   });
+
+  return true;
 }
 
 export async function listMessages(conversationId: string) {

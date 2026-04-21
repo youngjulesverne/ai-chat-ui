@@ -1,33 +1,23 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export default function Sidebar({
   initialConversations,
   activeConversationId,
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
-  const [conversations, setConversations] = useState(initialConversations);
 
-  useEffect(() => {
-    setConversations(initialConversations);
-  }, [initialConversations]);
+  const conversations = useMemo(() => {
+    return queryClient.getQueryData(["conversations"]) ?? initialConversations;
+  }, [initialConversations, queryClient]);
 
-  async function handleNewChat() {
-    const previous = conversations;
-
-    const optimisticConversation = {
-      id: `temp-${Date.now()}`,
-      title: "New Chat",
-      subtitle: "Open conversation",
-      updatedAt: new Date().toISOString(),
-    };
-
-    setConversations([optimisticConversation, ...previous]);
-
-    try {
+  const createConversationMutation = useMutation({
+    mutationFn: async () => {
       const response = await fetch("/api/conversations", {
         method: "POST",
       });
@@ -36,25 +26,53 @@ export default function Sidebar({
         throw new Error("Failed to create conversation");
       }
 
-      const createdConversation = await response.json();
+      return response.json();
+    },
 
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
+
+      const previousConversations =
+        queryClient.getQueryData(["conversations"]) ?? initialConversations;
+
+      const optimisticConversation = {
+        id: `temp-${Date.now()}`,
+        title: "New Chat",
+        subtitle: "Open conversation",
+        updatedAt: new Date().toISOString(),
+      };
+
+      queryClient.setQueryData(["conversations"], [
+        optimisticConversation,
+        ...previousConversations,
+      ]);
+
+      return { previousConversations };
+    },
+
+    onError: (_error, _variables, context) => {
+      queryClient.setQueryData(
+        ["conversations"],
+        context?.previousConversations ?? initialConversations,
+      );
+    },
+
+    onSuccess: (createdConversation) => {
       startTransition(() => {
         router.push(`/conversations/${createdConversation.id}`);
+      });
+    },
+
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      startTransition(() => {
         router.refresh();
       });
-    } catch (error) {
-      setConversations(previous);
-      console.error(error);
-    }
-  }
+    },
+  });
 
-  async function handleDeleteConversation(id) {
-    const previous = conversations;
-    const nextConversations = previous.filter((conversation) => conversation.id !== id);
-
-    setConversations(nextConversations);
-
-    try {
+  const deleteConversationMutation = useMutation({
+    mutationFn: async (id) => {
       const response = await fetch(`/api/conversations/${id}`, {
         method: "DELETE",
       });
@@ -63,47 +81,75 @@ export default function Sidebar({
         throw new Error("Failed to delete conversation");
       }
 
-      if (id === activeConversationId) {
-        if (nextConversations.length > 0) {
+      return id;
+    },
+
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ["conversations"] });
+
+      const previousConversations =
+        queryClient.getQueryData(["conversations"]) ?? initialConversations;
+
+      const nextConversations = previousConversations.filter(
+        (conversation) => conversation.id !== id,
+      );
+
+      queryClient.setQueryData(["conversations"], nextConversations);
+
+      return { previousConversations, nextConversations };
+    },
+
+    onError: (_error, _id, context) => {
+      queryClient.setQueryData(
+        ["conversations"],
+        context?.previousConversations ?? initialConversations,
+      );
+    },
+
+    onSuccess: async (deletedId) => {
+      const currentConversations =
+        queryClient.getQueryData(["conversations"]) ?? [];
+
+      if (deletedId === activeConversationId) {
+        if (currentConversations.length > 0) {
           startTransition(() => {
-            router.push(`/conversations/${nextConversations[0].id}`);
-            router.refresh();
+            router.push(`/conversations/${currentConversations[0].id}`);
           });
-        } else {
-          const createResponse = await fetch("/api/conversations", {
-            method: "POST",
-          });
-
-          if (!createResponse.ok) {
-            throw new Error("Failed to create fallback conversation");
-          }
-
-          const createdConversation = await createResponse.json();
-
-          startTransition(() => {
-            router.push(`/conversations/${createdConversation.id}`);
-            router.refresh();
-          });
+          return;
         }
-      } else {
+
+        const response = await fetch("/api/conversations", {
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to create fallback conversation");
+        }
+
+        const createdConversation = await response.json();
+
         startTransition(() => {
-          router.refresh();
+          router.push(`/conversations/${createdConversation.id}`);
         });
       }
-    } catch (error) {
-      setConversations(previous);
-      console.error(error);
-    }
-  }
+    },
+
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      startTransition(() => {
+        router.refresh();
+      });
+    },
+  });
 
   return (
     <aside className="flex w-80 flex-col border-r border-zinc-800 bg-zinc-950 p-4">
       <button
-        onClick={handleNewChat}
-        disabled={isPending}
+        onClick={() => createConversationMutation.mutate()}
+        disabled={isPending || createConversationMutation.isPending}
         className="mb-4 rounded-2xl bg-zinc-100 px-4 py-3 text-sm font-medium text-zinc-900 transition hover:bg-zinc-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isPending ? "Working..." : "+ New Chat"}
+        {createConversationMutation.isPending ? "Working..." : "+ New Chat"}
       </button>
 
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -132,8 +178,8 @@ export default function Sidebar({
 
             {!String(conversation.id).startsWith("temp-") ? (
               <button
-                onClick={() => handleDeleteConversation(conversation.id)}
-                disabled={isPending}
+                onClick={() => deleteConversationMutation.mutate(conversation.id)}
+                disabled={isPending || deleteConversationMutation.isPending}
                 className="mt-2 text-xs text-red-400 transition hover:text-red-300 disabled:opacity-50"
               >
                 Delete

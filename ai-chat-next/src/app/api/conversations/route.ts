@@ -1,32 +1,14 @@
-import { prisma } from "../../../lib/prisma";
+import {
+  createConversation,
+  listConversations,
+} from "../../../lib/data/chat";
 
 export async function GET() {
-  const conversations = await prisma.conversation.findMany({
-    orderBy: { updatedAt: "desc" },
-    select: {
-      id: true,
-      title: true,
-      subtitle: true,
-      updatedAt: true,
-    },
-  });
-
+  const conversations = await listConversations();
   return Response.json(conversations);
 }
 
 export async function POST() {
-  const conversation = await prisma.conversation.create({
-    data: {
-      title: "New Chat",
-      subtitle: "Open conversation",
-    },
-    select: {
-      id: true,
-      title: true,
-      subtitle: true,
-      updatedAt: true,
-    },
-  });
-
+  const conversation = await createConversation();
   return Response.json(conversation, { status: 201 });
 }

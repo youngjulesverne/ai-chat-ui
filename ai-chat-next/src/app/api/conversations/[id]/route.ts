@@ -1,4 +1,4 @@
-import { prisma } from "../../../../lib/prisma";
+import { deleteConversation } from "../../../../lib/data/chat";
 
 type Context = {
   params: Promise<{ id: string }>;
@@ -7,18 +7,11 @@ type Context = {
 export async function DELETE(_request: Request, context: Context) {
   const { id } = await context.params;
 
-  const existing = await prisma.conversation.findUnique({
-    where: { id },
-    select: { id: true },
-  });
+  const deleted = await deleteConversation(id);
 
-  if (!existing) {
+  if (!deleted) {
     return Response.json({ error: "Conversation not found" }, { status: 404 });
   }
-
-  await prisma.conversation.delete({
-    where: { id },
-  });
 
   return new Response(null, { status: 204 });
 }
